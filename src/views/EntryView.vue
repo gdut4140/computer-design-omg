@@ -27,7 +27,7 @@ function goLogin() {
 
       <button class="primary-button" type="button" @click="goLogin">坠入星眸</button>
 
-      <p class="entry-footer">© 2024 星眸医疗科技 | 专业 · 精准 · 关怀</p>
+      <p class="entry-footer">© 2026 | 专业 · 精准 · 关怀</p>
     </div>
   </section>
 </template>

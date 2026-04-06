@@ -117,11 +117,12 @@ function toHistoryItem(record: ScreenRecordVO): DetectHistory {
         MIDDLE: '中风险',
         HIGH: '高风险',
     }
+    const abnormalPercent = Number(record.abnormalProb) * 100
 
     return {
         date: record.testTime ? record.testTime.slice(0, 10).replace(/-/g, '.') : '-',
         risk: riskLabelMap[String(record.riskLevel).toUpperCase()] ?? String(record.riskLevel || '-'),
-        rate: `异常概率 ${record.abnormalProb}%`,
+        rate: `异常概率 ${Number.isFinite(abnormalPercent) ? abnormalPercent.toFixed(1) : '0.0'}%`,
         level: mapRiskLevel(record.riskLevel),
     }
 }
