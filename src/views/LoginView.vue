@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { useAuthStore } from '../stores/auth'
 import AnimatedEyeLogo from '../components/AnimatedEyeLogo.vue'
 import type { AppRole } from '../types/auth'
@@ -19,7 +20,6 @@ const tabs: LoginTab[] = [
 
 const activeTab = ref<LoginTab['key']>('doctor')
 const loading = ref(false)
-const message = ref('')
 const registerMode = ref(false)
 
 const form = reactive({
@@ -30,6 +30,12 @@ const form = reactive({
 
 const authStore = useAuthStore()
 const router = useRouter()
+
+const roleLabelMap: Record<AppRole, string> = {
+  1: '医生',
+  2: '家长',
+  3: '管理员',
+}
 
 const activeRole = computed<AppRole>(() => {
   return tabs.find((item) => item.key === activeTab.value)?.role ?? 1
@@ -51,19 +57,24 @@ function validateForm() {
   }
 }
 
-function clearMessage() {
-  message.value = ''
+function notify(message: string, type: 'success' | 'warning' | 'error' | 'info' = 'info') {
+  ElMessage({
+    message,
+    type,
+    duration: 2200,
+    showClose: true,
+    offset: 72,
+  })
 }
 
 async function submit() {
-  clearMessage()
   loading.value = true
   try {
     validateForm()
 
     if (registerMode.value) {
       await authStore.register(form.phone, form.password, activeRole.value)
-      message.value = '注册成功，请使用新账号登录'
+      notify('注册成功，请使用新账号登录', 'success')
       registerMode.value = false
       form.confirmPassword = ''
       return
@@ -72,16 +83,16 @@ async function submit() {
     const user = await authStore.login(form.phone, form.password)
 
     if (user.role !== activeRole.value) {
-      await authStore.logout()
-      throw new Error('账号角色与当前端口不匹配，请切换登录端口')
+      authStore.clearAuth()
+      const actualRole = roleLabelMap[user.role] ?? '未知角色'
+      const currentRole = roleLabelMap[activeRole.value] ?? '当前入口'
+      throw new Error(`角色不匹配：该账号为${actualRole}账号，当前是${currentRole}入口，请切换后重试`)
     }
 
-    message.value = '登录成功，正在进入系统...'
-    setTimeout(() => {
-      router.push({ name: 'patient-info', query: { role: String(user.role) } })
-    }, 450)
+    notify('登录成功，正在进入系统...', 'success')
+    router.push({ name: 'patient-info', query: { role: String(user.role) } })
   } catch (error) {
-    message.value = error instanceof Error ? error.message : '操作失败，请稍后重试'
+    notify(error instanceof Error ? error.message : '操作失败，请稍后重试', 'error')
   } finally {
     loading.value = false
   }
@@ -133,14 +144,12 @@ async function submit() {
         </button>
       </form>
 
-      <p class="form-message" :class="{ success: message.includes('成功') }">{{ message }}</p>
-
       <div class="form-actions">
-        <button type="button" class="text-link" @click="message = '请联系管理员重置密码'">忘记密码?</button>
+        <button type="button" class="text-link" @click="notify('请联系管理员重置密码', 'warning')">忘记密码?</button>
         <button
           type="button"
           class="text-link bright"
-          @click="registerMode = !registerMode; clearMessage()"
+          @click="registerMode = !registerMode"
         >
           {{ registerMode ? '返回登录' : '新用户注册' }}
         </button>

@@ -1,23 +1,164 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { ElMessage } from 'element-plus'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { Clock, Search, VideoPlay, WarningFilled } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
+import { useRouter } from 'vue-router'
+import { queryRecordByNameId } from '../../api/record'
+import type { ScreenRecordVO } from '../../types/domain'
 
+const ANALYSIS_REPORT_RESULT_KEY = 'analysis_report_result_payload'
 const trendRef = ref<HTMLDivElement | null>(null)
 const radarRef = ref<HTMLDivElement | null>(null)
+const queryName = ref('')
+const queryIdCard = ref('')
+const activeQueryKey = ref('')
+const loading = ref(false)
+const hasSearched = ref(false)
+const records = ref<ScreenRecordVO[]>([])
+const selectedRecordId = ref<number | null>(null)
+const latestRecord = computed(() => {
+  if (!records.value.length) return null
+  return records.value
+    .slice()
+    .sort((a, b) => new Date(b.testTime).getTime() - new Date(a.testTime).getTime())[0]
+})
+const selectedRecord = computed(() => {
+  if (!records.value.length) return null
+  if (selectedRecordId.value == null) return latestRecord.value
+  return records.value.find((item) => Number(item.id) === Number(selectedRecordId.value)) ?? latestRecord.value ?? null
+})
+
+const router = useRouter()
 
 let trendChart: echarts.ECharts | null = null
 let radarChart: echarts.ECharts | null = null
 
+function toPercentValue(raw: unknown) {
+  const value = Number(raw)
+  if (Number.isNaN(value)) return 0
+  const normalized = value >= 0 && value <= 1 ? value * 100 : value
+  return Math.max(0, Math.min(100, normalized))
+}
+
+function formatDay(value: string) {
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return '--'
+  return `${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`
+}
+
+function formatDate(value: string) {
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return value || '--'
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function getRiskMeta(level: string) {
+  const upper = String(level || '').toUpperCase()
+  if (upper === 'HIGH') return { label: '高风险', cls: 'high' }
+  if (upper === 'MIDDLE') return { label: '中风险', cls: 'mid' }
+  return { label: '低风险', cls: 'low' }
+}
+
+function hashText(text: string) {
+  let hash = 2166136261
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i)
+    hash = Math.imul(hash, 16777619)
+  }
+  return hash >>> 0
+}
+
+function createPrng(seed: number) {
+  let t = seed >>> 0
+  return () => {
+    t += 0x6d2b79f5
+    let x = Math.imul(t ^ (t >>> 15), t | 1)
+    x ^= x + Math.imul(x ^ (x >>> 7), x | 61)
+    return ((x ^ (x >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value))
+}
+
+function randomInRange(prng: () => number, min: number, max: number) {
+  return min + prng() * (max - min)
+}
+
+function buildDeterministicRadarVector(record: ScreenRecordVO | null, allItems: ScreenRecordVO[]) {
+  if (!record || !allItems.length || !activeQueryKey.value) return [0, 0, 0, 0, 0]
+
+  const sorted = allItems
+    .slice()
+    .sort((a, b) => new Date(a.testTime).getTime() - new Date(b.testTime).getTime())
+
+  const abnormal = toPercentValue(record.abnormalProb)
+  const accuracy = toPercentValue(record.accuracy)
+  const normal = 100 - abnormal
+
+  // Seed changes only when person/history changes, so chart is stable across repeated queries.
+  const historySignature = `${sorted.length}|${record.id}|${record.testTime}|${sorted
+    .map((item) => `${item.id}:${toPercentValue(item.abnormalProb).toFixed(1)}`)
+    .join(',')}`
+  const seedBase = `${activeQueryKey.value}|${record.childId}|${record.childName || ''}|${historySignature}`
+  const prng = createPrng(hashText(seedBase))
+
+  // Use larger seeded offsets so different people are visually distinct even when risk scores are similar.
+  const personShiftA = randomInRange(prng, -16, 16)
+  const personShiftB = randomInRange(prng, -16, 16)
+  const personShiftC = randomInRange(prng, -16, 16)
+  const personShiftD = randomInRange(prng, -16, 16)
+  const personShiftE = randomInRange(prng, -16, 16)
+
+  const focusDuration = clamp(26 + normal * 0.52 + personShiftA, 0, 100)
+  const socialFocus = clamp(20 + normal * 0.58 + personShiftB, 0, 100)
+  const blinkFreq = clamp(30 + abnormal * 0.52 + personShiftC, 0, 100)
+  const pupilResponse = clamp(26 + normal * 0.4 + personShiftD, 0, 100)
+  const scanSpeed = clamp(36 + accuracy * 0.5 + personShiftE, 0, 100)
+
+  return [
+    Number(focusDuration.toFixed(1)),
+    Number(scanSpeed.toFixed(1)),
+    Number(pupilResponse.toFixed(1)),
+    Number(blinkFreq.toFixed(1)),
+    Number(socialFocus.toFixed(1)),
+  ]
+}
+
+const displayRecords = computed(() => {
+  return records.value
+    .slice()
+    .sort((a, b) => new Date(b.testTime).getTime() - new Date(a.testTime).getTime())
+    .map((item) => ({
+      ...item,
+      percent: toPercentValue(item.abnormalProb),
+      risk: getRiskMeta(item.riskLevel),
+      dateText: formatDate(item.testTime),
+    }))
+})
+
 function renderTrendChart() {
   if (!trendRef.value) return
 
-  trendChart = echarts.init(trendRef.value)
+  if (!trendChart) {
+    trendChart = echarts.init(trendRef.value)
+  }
+
+  const sorted = records.value
+    .slice()
+    .sort((a, b) => new Date(a.testTime).getTime() - new Date(b.testTime).getTime())
+
+  const xAxisData = sorted.map((item) => formatDay(item.testTime))
+  const seriesData = sorted.map((item) => toPercentValue(item.abnormalProb))
+
   trendChart.setOption({
     grid: { left: 56, right: 24, top: 26, bottom: 36 },
     xAxis: {
       type: 'category',
       boundaryGap: false,
-      data: ['02.28', '03.05', '03.10', '03.15'],
+      data: xAxisData.length ? xAxisData : ['--'],
       axisLabel: { color: '#8d9ab9' },
       axisLine: { lineStyle: { color: '#38496f' } },
       axisTick: { show: false },
@@ -37,7 +178,7 @@ function renderTrendChart() {
       {
         type: 'line',
         smooth: true,
-        data: [45, 39, 30, 72],
+        data: seriesData.length ? seriesData : [0],
         symbol: 'circle',
         symbolSize: 7,
         lineStyle: { width: 4, color: '#11dfd2' },
@@ -71,7 +212,12 @@ function renderTrendChart() {
 function renderRadarChart() {
   if (!radarRef.value) return
 
-  radarChart = echarts.init(radarRef.value)
+  if (!radarChart) {
+    radarChart = echarts.init(radarRef.value)
+  }
+
+  const currentVector = buildDeterministicRadarVector(selectedRecord.value ?? null, records.value)
+
   radarChart.setOption({
     legend: {
       show: false,
@@ -112,7 +258,7 @@ function renderRadarChart() {
         type: 'radar',
         data: [
           {
-            value: [72, 78, 48, 66, 40],
+            value: currentVector,
             areaStyle: { color: 'rgba(15, 228, 215, 0.2)' },
             lineStyle: { color: '#0fe4d7', width: 2 },
             itemStyle: { color: '#0fe4d7' },
@@ -132,6 +278,60 @@ function renderRadarChart() {
 function resizeAll() {
   trendChart?.resize()
   radarChart?.resize()
+}
+
+async function handleQuery() {
+  const name = queryName.value.trim()
+  const idCard = queryIdCard.value.trim()
+  if (!name || !idCard) {
+    ElMessage.warning('请输入患儿姓名和身份证号')
+    return
+  }
+
+  loading.value = true
+  hasSearched.value = true
+  try {
+    activeQueryKey.value = `${name}|${idCard}`
+    records.value = await queryRecordByNameId({ name, idCard })
+    selectedRecordId.value = records.value[0] ? Number(records.value[0].id) : null
+    if (!records.value.length) {
+      ElMessage.info('未查询到该患儿记录')
+    }
+    renderTrendChart()
+    renderRadarChart()
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '查询失败，请稍后重试')
+  } finally {
+    loading.value = false
+  }
+}
+
+function selectRecord(item: ScreenRecordVO) {
+  selectedRecordId.value = Number(item.id)
+  renderRadarChart()
+}
+
+async function viewRecordVideo(item: ScreenRecordVO) {
+  const payload = {
+    child: {
+      id: Number(item.childId),
+      name: item.childName || queryName.value || `患儿#${item.childId}`,
+      age: 0,
+      gender: '男' as const,
+      code: `SE${String(item.childId).padStart(8, '0')}`,
+    },
+    result: {
+      childId: Number(item.childId),
+      abnormalProb: Number(item.abnormalProb),
+      riskLevel: String(item.riskLevel || ''),
+      accuracy: Number(item.accuracy),
+      testTime: item.testTime,
+    },
+    datasetLabel: '历史记录回放',
+  }
+
+  sessionStorage.setItem(ANALYSIS_REPORT_RESULT_KEY, JSON.stringify(payload))
+  await router.push({ name: 'analysis-report' })
 }
 
 onMounted(() => {
@@ -155,26 +355,59 @@ onBeforeUnmount(() => {
       <aside class="left-panel">
         <h2>筛查历史与趋势分析</h2>
 
-        <h3>🔍 患儿筛查历史搜索</h3>
+        <h3 class="title-with-icon">
+          <el-icon>
+            <Search />
+          </el-icon>
+          患儿筛查历史搜索
+        </h3>
         <label>
           患儿姓名
-          <input type="text" />
+          <input v-model.trim="queryName" type="text" placeholder="请输入患儿姓名" />
         </label>
         <label>
           身份证号
-          <input type="text" />
+          <input v-model.trim="queryIdCard" type="text" placeholder="请输入身份证号" />
         </label>
 
-        <button class="search-btn" type="button">⌕ 查询</button>
+        <button class="search-btn" type="button" :disabled="loading" @click="handleQuery">
+          <el-icon class="inline-icon">
+            <Search />
+          </el-icon>
+          {{ loading ? '查询中...' : '查询' }}
+        </button>
 
-        <h3>🕘 历史筛查记录</h3>
-        <article class="record-card">
-          <div class="record-row">
-            <p>2026-03-15</p>
-            <b>● 中度风险</b>
-          </div>
-          <button type="button">◼ 查看视频</button>
-        </article>
+        <h3 class="title-with-icon">
+          <el-icon>
+            <Clock />
+          </el-icon>
+          历史筛查记录
+        </h3>
+        <div class="records-wrap">
+          <article v-for="item in displayRecords" :key="item.id" class="record-card"
+            :class="{ active: Number(item.id) === Number(selectedRecordId) }" @click="selectRecord(item)">
+            <div class="record-row">
+              <div>
+                <p>{{ item.dateText }}</p>
+                <small>异常概率 {{ item.percent.toFixed(1) }}%</small>
+              </div>
+              <b :class="item.risk.cls">
+                <el-icon class="risk-icon">
+                  <WarningFilled />
+                </el-icon>
+                {{ item.risk.label }}
+              </b>
+            </div>
+            <button type="button" @click.stop="viewRecordVideo(item)">
+              <el-icon class="inline-icon">
+                <VideoPlay />
+              </el-icon>
+              查看视频
+            </button>
+          </article>
+          <p v-if="!hasSearched" class="empty-tip">请先输入患儿姓名和身份证号后查询</p>
+          <p v-else-if="!displayRecords.length && !loading" class="empty-tip">暂无筛查记录</p>
+        </div>
       </aside>
 
       <main class="right-panel">
@@ -194,8 +427,9 @@ onBeforeUnmount(() => {
 
 <style scoped lang="scss">
 .history-page {
-  min-height: calc(100vh - 128px);
+  height: calc(100vh - 176px);
   display: flex;
+  overflow: hidden;
 }
 
 .history-grid {
@@ -205,6 +439,7 @@ onBeforeUnmount(() => {
   width: 100%;
   flex: 1;
   align-items: stretch;
+  min-height: 0;
 }
 
 .left-panel {
@@ -215,6 +450,8 @@ onBeforeUnmount(() => {
   height: 100%;
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
 
   h2 {
     margin: 0 0 18px;
@@ -249,6 +486,10 @@ onBeforeUnmount(() => {
 }
 
 .search-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   width: 100%;
   height: 48px;
   border-radius: 10px;
@@ -259,39 +500,125 @@ onBeforeUnmount(() => {
   font-weight: 700;
   cursor: pointer;
   margin-top: 8px;
+
+  &:disabled {
+    opacity: 0.72;
+    cursor: not-allowed;
+  }
+}
+
+.title-with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inline-icon {
+  font-size: 15px;
+}
+
+.records-wrap {
+  margin-top: 4px;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  gap: 10px;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(27, 209, 199, 0.82) rgba(18, 30, 56, 0.92);
+
+  &::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  &::-webkit-scrollbar-track {
+    border-radius: 999px;
+    background: rgba(18, 30, 56, 0.92);
+    border: 1px solid rgba(60, 86, 132, 0.28);
+  }
+
+  &::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: linear-gradient(180deg, rgba(27, 209, 199, 0.92), rgba(18, 170, 160, 0.9));
+  }
+
+  &::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, rgba(44, 229, 218, 0.95), rgba(27, 209, 199, 0.95));
+  }
 }
 
 .record-card {
-  margin-top: 8px;
   border-radius: 12px;
   background: rgba(24, 36, 66, 0.76);
   border: 1px solid rgba(66, 86, 132, 0.35);
   padding: 12px;
+  cursor: pointer;
+  transition: 0.2s ease;
+
+  &:hover {
+    border-color: rgba(27, 209, 199, 0.45);
+  }
+
+  &.active {
+    border-color: rgba(27, 209, 199, 0.78);
+    box-shadow: 0 0 0 1px rgba(27, 209, 199, 0.22) inset;
+  }
 
   .record-row {
-    margin-top: auto;
+    display: flex;
     align-items: center;
     justify-content: space-between;
     margin-bottom: 8px;
+
+    >div {
+      display: grid;
+      gap: 2px;
+    }
 
     p {
       margin: 0;
       color: #e2ecff;
       font-size: 14px;
-    grid-template-rows: 1fr 1fr;
       font-weight: 700;
-    height: 100%;
       line-height: 1.35;
     }
 
+    small {
+      color: #9aabcf;
+      font-size: 12px;
+    }
+
     b {
-      color: #ffbe29;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
       font-size: 14px;
       font-weight: 700;
+
+      .risk-icon {
+        font-size: 14px;
+      }
+
+      &.low {
+        color: #22d372;
+      }
+
+      &.mid {
+        color: #ffbe29;
+      }
+
+      &.high {
+        color: #ff7d6d;
+      }
     }
   }
 
   button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
     width: 100%;
     height: 40px;
     border-radius: 10px;
@@ -304,9 +631,18 @@ onBeforeUnmount(() => {
   }
 }
 
+.empty-tip {
+  margin: 6px 0 0;
+  color: #8ea1c8;
+  font-size: 13px;
+  text-align: center;
+}
+
 .right-panel {
   display: grid;
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
   gap: 16px;
+  min-height: 0;
 }
 
 .chart-card {
@@ -337,8 +673,9 @@ onBeforeUnmount(() => {
 
 @media (max-width: 1360px) {
   .history-page {
-    min-height: auto;
+    height: auto;
     display: block;
+    overflow: visible;
   }
 
   .history-grid {

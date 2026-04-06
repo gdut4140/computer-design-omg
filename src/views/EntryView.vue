@@ -25,7 +25,7 @@ function goLogin() {
       </div>
       <h1 class="entry-title">星眸筛查系统</h1>
 
-      <button class="primary-button" type="button" @click="goLogin">安全登录</button>
+      <button class="primary-button" type="button" @click="goLogin">坠入星眸</button>
 
       <p class="entry-footer">© 2024 星眸医疗科技 | 专业 · 精准 · 关怀</p>
     </div>

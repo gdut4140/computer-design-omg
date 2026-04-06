@@ -1,10 +1,15 @@
 <script setup lang="ts">
+import { ElMessage } from 'element-plus'
 import { reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import type { FormInstance } from 'element-plus'
+import { addChild } from '../../api/child'
 
 const saving = ref(false)
-const message = ref('')
 const formRef = ref<FormInstance>()
+const router = useRouter()
+
+const PREFERRED_CHILD_HINT_KEY = 'preferred_new_child_hint'
 
 const form = reactive({
   childName: '',
@@ -16,22 +21,37 @@ const form = reactive({
 })
 
 async function saveForm() {
-  message.value = ''
-
   if (!form.childName.trim()) {
-    message.value = '请填写患儿姓名'
+    ElMessage.warning('请填写患儿姓名')
     return
   }
   if (!form.gender) {
-    message.value = '请选择性别'
+    ElMessage.warning('请选择性别')
     return
   }
-  if (!form.age && !form.birthday) {
-    message.value = '请填写年龄或出生日期'
+  if (!form.age) {
+    ElMessage.warning('请填写年龄')
+    return
+  }
+  const age = Number(form.age)
+  if (!Number.isFinite(age) || age < 0 || age > 18) {
+    ElMessage.warning('年龄需在0-18岁之间')
+    return
+  }
+  if (!form.birthday) {
+    ElMessage.warning('请选择出生日期')
+    return
+  }
+  if (!form.idNumber.trim()) {
+    ElMessage.warning('请填写身份证号')
+    return
+  }
+  if (!/^\d{15}$|^\d{17}[\dXx]$/.test(form.idNumber.trim())) {
+    ElMessage.warning('请输入正确的身份证号')
     return
   }
   if (!form.agreed) {
-    message.value = '请先同意相关协议'
+    ElMessage.warning('请先同意相关协议')
     return
   }
 
@@ -41,8 +61,28 @@ async function saveForm() {
 
   saving.value = true
   try {
-    await new Promise((resolve) => setTimeout(resolve, 450))
-    message.value = '保存成功'
+    await addChild({
+      name: form.childName.trim(),
+      gender: form.gender === 'male' ? 1 : 2,
+      age,
+      birthDate: form.birthday,
+      idCard: form.idNumber.trim(),
+    })
+
+    sessionStorage.setItem(
+      PREFERRED_CHILD_HINT_KEY,
+      JSON.stringify({
+        name: form.childName.trim(),
+        idCard: form.idNumber.trim(),
+        birthDate: form.birthday,
+        ts: Date.now(),
+      }),
+    )
+
+    ElMessage.success('新增成功')
+    router.push({ name: 'start-detect' })
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '新增失败，请稍后重试')
   } finally {
     saving.value = false
   }
@@ -121,8 +161,6 @@ async function saveForm() {
         <el-button class="primary-button wide save-btn" native-type="submit" :loading="saving" @click="saveForm">
           {{ saving ? '新增中...' : '新增' }}
         </el-button>
-
-        <p class="save-message" :class="{ ok: message === '保存成功' }">{{ message }}</p>
       </el-form>
     </article>
   </section>
@@ -279,17 +317,6 @@ async function saveForm() {
   height: 68px;
   font-size: 16px;
   border: 0;
-}
-
-.save-message {
-  margin: 0;
-  min-height: 20px;
-  color: #ff9c9c;
-  font-size: 14px;
-
-  &.ok {
-    color: #7af0b1;
-  }
 }
 
 @media (max-width: 1100px) {

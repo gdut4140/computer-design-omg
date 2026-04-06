@@ -327,7 +327,7 @@ input {
 .auth-form {
 	display: flex;
 	flex-direction: column;
-	gap: 24px;
+	gap: 28px;
 }
 
 .auth-form label {
@@ -378,7 +378,7 @@ input {
 
 .form-message {
 	min-height: 34px;
-	margin: 16px 4px 6px;
+	margin: 18px 4px 10px;
 	color: #ff9da2;
 	font-size: 15px;
 }
@@ -391,6 +391,7 @@ input {
 	display: flex;
 	justify-content: space-between;
 	align-items: center;
+	margin-top: 8px;
 }
 
 .text-link {

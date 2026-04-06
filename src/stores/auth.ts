@@ -40,13 +40,17 @@ export const useAuthStore = defineStore('auth', () => {
 
     async function logout() {
         try {
-            await logoutApi(token.value)
+            await logoutApi()
         } finally {
-            token.value = ''
-            user.value = null
-            localStorage.removeItem(TOKEN_KEY)
-            localStorage.removeItem(USER_KEY)
+            clearAuth()
         }
+    }
+
+    function clearAuth() {
+        token.value = ''
+        user.value = null
+        localStorage.removeItem(TOKEN_KEY)
+        localStorage.removeItem(USER_KEY)
     }
 
     return {
@@ -56,5 +60,6 @@ export const useAuthStore = defineStore('auth', () => {
         login,
         register,
         logout,
+        clearAuth,
     }
 })
