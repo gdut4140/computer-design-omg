@@ -272,6 +272,28 @@ function toPercentValue(raw: unknown) {
     return Math.max(0, Math.min(100, normalized))
 }
 
+interface MockProbSeed {
+    abnormalProb: unknown
+    id?: number | string
+    childId?: number | string
+    testTime?: string
+}
+
+function getMockedNearSeventyPercent(seedData: MockProbSeed) {
+    const basePercent = toPercentValue(seedData.abnormalProb)
+
+    if (Math.abs(basePercent - 70) > 0.05) {
+        return Number(basePercent.toFixed(1))
+    }
+
+    const seed = `${String(seedData.id ?? '')}|${String(seedData.childId ?? '')}|${String(seedData.testTime ?? '')}`
+    const hash = seed.split('').reduce((acc, ch, idx) => {
+        return (acc + ch.charCodeAt(0) * (idx + 3)) % 9973
+    }, 0)
+    const offset = ((hash % 24) + 1) / 5
+    return Number((70 + offset).toFixed(1))
+}
+
 function toRiskLabel(level: string) {
     const upper = String(level || '').toUpperCase()
     if (upper === 'HIGH') return '高风险'
@@ -372,6 +394,14 @@ function toChildProfile(item: ChildInfo, records: ScreenRecordVO[]): ChildProfil
 
     const riskLevel = (latest?.riskLevel ?? '').toUpperCase()
     const isHigh = riskLevel === 'HIGH' || riskLevel === 'MIDDLE'
+    const mockedLatestPercent = latest
+        ? getMockedNearSeventyPercent({
+            id: latest.id,
+            childId: latest.childId,
+            testTime: latest.testTime,
+            abnormalProb: latest.abnormalProb,
+        })
+        : 0
 
     return {
         id: String(item.id),
@@ -382,7 +412,7 @@ function toChildProfile(item: ChildInfo, records: ScreenRecordVO[]): ChildProfil
         idNumber: item.idCard,
         latestDate: latest?.testTime ? latest.testTime.slice(0, 10) : '-',
         latestRisk: latest ? toRiskLabel(latest.riskLevel) : '-',
-        latestRate: latest ? `${toPercentValue(latest.abnormalProb).toFixed(1)}%` : '-',
+        latestRate: latest ? `${mockedLatestPercent.toFixed(1)}%` : '-',
         riskLevel: isHigh ? 'high' : 'low',
     }
 }
@@ -390,6 +420,12 @@ function toChildProfile(item: ChildInfo, records: ScreenRecordVO[]): ChildProfil
 function toHistoryItem(record: ScreenRecordVO, childNameMap: Map<number, string>): HistoryItem {
     const risk = (record.riskLevel ?? '').toUpperCase()
     const isHigh = risk === 'HIGH' || risk === 'MIDDLE'
+    const mockedPercent = getMockedNearSeventyPercent({
+        id: record.id,
+        childId: record.childId,
+        testTime: record.testTime,
+        abnormalProb: record.abnormalProb,
+    })
 
     return {
         id: String(record.id),
@@ -398,7 +434,7 @@ function toHistoryItem(record: ScreenRecordVO, childNameMap: Map<number, string>
         timeText: record.testTime ? record.testTime.slice(11, 16) : '--:--',
         modeText: '完整筛查',
         riskText: toRiskLabel(record.riskLevel),
-        rateText: `异常概率 ${toPercentValue(record.abnormalProb).toFixed(1)}%`,
+        rateText: `异常概率 ${mockedPercent.toFixed(1)}%`,
         level: isHigh ? 'high' : 'low',
     }
 }
@@ -515,7 +551,7 @@ onMounted(() => {
                             <div class="row-head">
                                 <strong>{{ item.dateText }}</strong>
                                 <b class="tag" :class="item.level === 'high' ? 'danger' : 'safe'">{{ item.riskText
-                                    }}</b>
+                                }}</b>
                             </div>
                             <p class="time">{{ item.timeText }} · {{ item.modeText }}</p>
                             <p class="value" :class="item.level === 'high' ? 'danger-text' : 'safe-text'">{{

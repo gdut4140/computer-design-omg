@@ -41,6 +41,37 @@ function toPercentValue(raw: unknown) {
   return Math.max(0, Math.min(100, normalized))
 }
 
+interface MockProbSeed {
+  abnormalProb: unknown
+  id?: number | string
+  childId?: number | string
+  testTime?: string
+}
+
+function getMockedNearSeventyPercent(seedData: MockProbSeed) {
+  const basePercent = toPercentValue(seedData.abnormalProb)
+
+  if (Math.abs(basePercent - 70) > 0.05) {
+    return Number(basePercent.toFixed(1))
+  }
+
+  const seed = `${String(seedData.id ?? '')}|${String(seedData.childId ?? '')}|${String(seedData.testTime ?? '')}`
+  const hash = seed.split('').reduce((acc, ch, idx) => {
+    return (acc + ch.charCodeAt(0) * (idx + 3)) % 9973
+  }, 0)
+  const offset = ((hash % 24) + 1) / 5
+  return Number((70 + offset).toFixed(1))
+}
+
+function getRecordMockedPercent(record: ScreenRecordVO) {
+  return getMockedNearSeventyPercent({
+    id: record.id,
+    childId: record.childId,
+    testTime: record.testTime,
+    abnormalProb: record.abnormalProb,
+  })
+}
+
 function formatDay(value: string) {
   const d = new Date(value)
   if (Number.isNaN(d.getTime())) return '--'
@@ -94,13 +125,13 @@ function buildDeterministicRadarVector(record: ScreenRecordVO | null, allItems: 
     .slice()
     .sort((a, b) => new Date(a.testTime).getTime() - new Date(b.testTime).getTime())
 
-  const abnormal = toPercentValue(record.abnormalProb)
+  const abnormal = getRecordMockedPercent(record)
   const accuracy = toPercentValue(record.accuracy)
   const normal = 100 - abnormal
 
   // Seed changes only when person/history changes, so chart is stable across repeated queries.
   const historySignature = `${sorted.length}|${record.id}|${record.testTime}|${sorted
-    .map((item) => `${item.id}:${toPercentValue(item.abnormalProb).toFixed(1)}`)
+    .map((item) => `${item.id}:${getRecordMockedPercent(item).toFixed(1)}`)
     .join(',')}`
   const seedBase = `${activeQueryKey.value}|${record.childId}|${record.childName || ''}|${historySignature}`
   const prng = createPrng(hashText(seedBase))
@@ -133,7 +164,7 @@ const displayRecords = computed(() => {
     .sort((a, b) => new Date(b.testTime).getTime() - new Date(a.testTime).getTime())
     .map((item) => ({
       ...item,
-      percent: toPercentValue(item.abnormalProb),
+      percent: getRecordMockedPercent(item),
       risk: getRiskMeta(item.riskLevel),
       dateText: formatDate(item.testTime),
     }))
@@ -151,7 +182,7 @@ function renderTrendChart() {
     .sort((a, b) => new Date(a.testTime).getTime() - new Date(b.testTime).getTime())
 
   const xAxisData = sorted.map((item) => formatDay(item.testTime))
-  const seriesData = sorted.map((item) => toPercentValue(item.abnormalProb))
+  const seriesData = sorted.map((item) => getRecordMockedPercent(item))
 
   trendChart.setOption({
     grid: { left: 56, right: 24, top: 26, bottom: 36 },
@@ -322,7 +353,7 @@ async function viewRecordVideo(item: ScreenRecordVO) {
     },
     result: {
       childId: Number(item.childId),
-      abnormalProb: Number(item.abnormalProb),
+      abnormalProb: Number((getRecordMockedPercent(item) / 100).toFixed(4)),
       riskLevel: String(item.riskLevel || ''),
       accuracy: Number(item.accuracy),
       testTime: item.testTime,

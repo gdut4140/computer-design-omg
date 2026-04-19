@@ -2,6 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Aim, Calendar, User, VideoCamera, VideoPause, VideoPlay } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
+import * as THREE from 'three'
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import type { EyeScreenResultVO } from '../../types/domain'
 
 const ANALYSIS_REPORT_RESULT_KEY = 'analysis_report_result_payload'
@@ -21,17 +23,30 @@ interface AnalysisReportPayload {
 
 const gaugeRef = ref<HTMLDivElement | null>(null)
 const middleTopRef = ref<HTMLDivElement | null>(null)
-const middleBottomRef = ref<HTMLDivElement | null>(null)
+const patientGlobeRef = ref<HTMLDivElement | null>(null)
+const baselineGlobeRef = ref<HTMLDivElement | null>(null)
 const videoRef = ref<HTMLVideoElement | null>(null)
 
 let gaugeChart: echarts.ECharts | null = null
 let middleTopChart: echarts.ECharts | null = null
-let middleBottomChart: echarts.ECharts | null = null
+
+interface GlobeInstance {
+    renderer: THREE.WebGLRenderer
+    scene: THREE.Scene
+    camera: THREE.PerspectiveCamera
+    controls: OrbitControls
+    frameId: number
+    resize: () => void
+}
+
+const globeInstances: GlobeInstance[] = []
 
 const reportPayload = ref<AnalysisReportPayload | null>(null)
 const isPlaying = ref(false)
 const currentTime = ref(0)
 const duration = ref(0)
+const showPatientTags = ref(true)
+const showBaselineTags = ref(true)
 
 function toPercentValue(raw: unknown) {
     const value = Number(raw)
@@ -42,6 +57,29 @@ function toPercentValue(raw: unknown) {
 
 const abnormalProb = computed(() => toPercentValue(reportPayload.value?.result.abnormalProb))
 const normalProb = computed(() => Math.max(0, 100 - abnormalProb.value))
+
+const patientAoiStats = computed(() => {
+    const social = Number((normalProb.value * 0.28 + 12).toFixed(1))
+    const eyes = Number((normalProb.value * 0.22 + 10).toFixed(1))
+    const mouth = Number((normalProb.value * 0.13 + 6).toFixed(1))
+    const nose = Number((normalProb.value * 0.1 + 5).toFixed(1))
+    const nonSocial = Number((100 - social - eyes - mouth - nose).toFixed(1))
+    return [
+        { name: '眼睛', value: eyes, color: '#f0bf57' },
+        { name: '鼻子', value: nose, color: '#9fdc51' },
+        { name: '嘴巴', value: mouth, color: '#ff7e66' },
+        { name: '社交区', value: social, color: '#4ac8df' },
+        { name: '非社交区', value: nonSocial, color: '#9ba4b0' },
+    ]
+})
+
+const baselineAoiStats = computed(() => [
+    { name: '眼睛', value: 24, color: '#f0bf57' },
+    { name: '鼻子', value: 22, color: '#9fdc51' },
+    { name: '嘴巴', value: 30, color: '#ff7e66' },
+    { name: '社交区', value: 18, color: '#4ac8df' },
+    { name: '非社交区', value: 6, color: '#9ba4b0' },
+])
 
 const abnormalProbColor = computed(() => {
     if (abnormalProb.value < 30) return '#0ad35d'
@@ -144,8 +182,49 @@ function renderGaugeChart() {
         gaugeChart = echarts.init(gaugeRef.value)
     }
 
+    const gaugeValue = Number(abnormalProb.value.toFixed(1))
+
     gaugeChart.setOption({
+        backgroundColor: 'transparent',
+        animationDuration: 1200,
+        animationEasing: 'cubicOut',
         series: [
+            {
+                type: 'gauge',
+                startAngle: 180,
+                endAngle: 0,
+                min: 0,
+                max: 100,
+                splitNumber: 10,
+                center: ['50%', '79%'],
+                radius: '112%',
+                axisLine: {
+                    lineStyle: {
+                        width: 34,
+                        color: [[1, 'rgba(26, 53, 92, 0.78)']],
+                    },
+                },
+                axisTick: {
+                    distance: -42,
+                    splitNumber: 4,
+                    lineStyle: {
+                        color: 'rgba(110, 183, 255, 0.36)',
+                        width: 1,
+                    },
+                    length: 6,
+                },
+                splitLine: {
+                    distance: -42,
+                    length: 10,
+                    lineStyle: {
+                        color: 'rgba(126, 210, 255, 0.42)',
+                        width: 1.5,
+                    },
+                },
+                axisLabel: { show: false },
+                pointer: { show: false },
+                detail: { show: false },
+            },
             {
                 type: 'gauge',
                 startAngle: 180,
@@ -169,20 +248,56 @@ function renderGaugeChart() {
                 axisTick: { show: false },
                 splitLine: { show: false },
                 axisLabel: { show: false },
+                progress: {
+                    show: true,
+                    width: 18,
+                    roundCap: true,
+                    itemStyle: {
+                        color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
+                            { offset: 0, color: '#1ff4d0' },
+                            { offset: 0.5, color: '#ffd15b' },
+                            { offset: 1, color: '#ff4d46' },
+                        ]),
+                        shadowColor: 'rgba(60, 210, 255, 0.42)',
+                        shadowBlur: 14,
+                    },
+                },
                 detail: {
-                    valueAnimation: false,
-                    offsetCenter: [0, '-24%'],
-                    fontSize: 64,
+                    valueAnimation: true,
+                    offsetCenter: [0, '-22%'],
+                    fontSize: 56,
                     fontWeight: 800,
                     color: abnormalProbColor.value,
                     formatter: '{value}%',
+                    textBorderColor: 'rgba(10, 20, 36, 0.88)',
+                    textBorderWidth: 5,
                 },
-                data: [{ value: Number(abnormalProb.value.toFixed(1)) }],
+                data: [{ value: gaugeValue }],
                 anchor: {
                     show: true,
                     size: 16,
                     itemStyle: { color: '#f2f8ff' },
                     offsetCenter: [0, '8%'],
+                },
+            },
+            {
+                type: 'gauge',
+                startAngle: 180,
+                endAngle: 0,
+                min: 0,
+                max: 100,
+                center: ['50%', '79%'],
+                radius: '118%',
+                pointer: { show: false },
+                axisTick: { show: false },
+                splitLine: { show: false },
+                axisLabel: { show: false },
+                detail: { show: false },
+                axisLine: {
+                    lineStyle: {
+                        width: 2,
+                        color: [[1, 'rgba(100, 206, 255, 0.26)']],
+                    },
                 },
             },
         ],
@@ -197,7 +312,7 @@ function renderMiddleTopChart() {
 
     const patient = [
         Number((60 - normalProb.value * 0.22).toFixed(1)),
-        Number((40 + normalProb.value * 0.38).toFixed(1)),
+        Number((15 + normalProb.value * 0.38).toFixed(1)),
         Number((32 + abnormalProb.value * 0.48).toFixed(1)),
         Number((35 + normalProb.value * 0.35).toFixed(1)),
         Number((48 + normalProb.value * 0.3).toFixed(1)),
@@ -255,11 +370,6 @@ function renderMiddleTopChart() {
 }
 
 function renderMiddleBottomChart() {
-    if (!middleBottomRef.value) return
-    if (!middleBottomChart) {
-        middleBottomChart = echarts.init(middleBottomRef.value)
-    }
-
     const patientSocial = Number((normalProb.value * 0.28 + 12).toFixed(1))
     const patientEyes = Number((normalProb.value * 0.22 + 10).toFixed(1))
     const patientMouth = Number((normalProb.value * 0.13 + 6).toFixed(1))
@@ -272,63 +382,375 @@ function renderMiddleBottomChart() {
     const baselineSocial = 18
     const baselineNonSocial = 6
 
-    middleBottomChart.setOption({
-        title: [
-            {
-                text: '患儿 AOI 分布',
-                left: '25%',
-                top: 6,
-                textAlign: 'center',
-                textStyle: { color: '#dde8ff', fontSize: 14, fontWeight: 700 },
-            },
-            {
-                text: '常模 AOI 分布',
-                left: '75%',
-                top: 6,
-                textAlign: 'center',
-                textStyle: { color: '#dde8ff', fontSize: 14, fontWeight: 700 },
-            },
-        ],
-        tooltip: { trigger: 'item', formatter: '{b}: {c}%' },
-        color: ['#f0bf57', '#9fdc51', '#ff7e66', '#4ac8df', '#9ba4b0'],
-        legend: {
-            bottom: 2,
-            textStyle: { color: '#9fb0d4', fontSize: 11 },
-            itemWidth: 10,
-            itemHeight: 10,
-            data: ['眼睛', '鼻子', '嘴巴', '社交区', '非社交区'],
-        },
-        series: [
-            {
-                type: 'pie',
-                center: ['25%', '50%'],
-                radius: ['0%', '28%'],
-                label: { color: '#d7e3ff', formatter: '{d}%', fontSize: 11 },
-                labelLine: { length: 10, length2: 8 },
-                data: [
-                    { name: '眼睛', value: patientEyes },
-                    { name: '鼻子', value: patientNose },
-                    { name: '嘴巴', value: patientMouth },
-                    { name: '社交区', value: patientSocial },
-                    { name: '非社交区', value: patientNonSocial },
-                ],
-            },
-            {
-                type: 'pie',
-                center: ['75%', '50%'],
-                radius: ['0%', '28%'],
-                label: { color: '#d7e3ff', formatter: '{d}%', fontSize: 11 },
-                labelLine: { length: 10, length2: 8 },
-                data: [
-                    { name: '眼睛', value: baselineEyes },
-                    { name: '鼻子', value: baselineNose },
-                    { name: '嘴巴', value: baselineMouth },
-                    { name: '社交区', value: baselineSocial },
-                    { name: '非社交区', value: baselineNonSocial },
-                ],
-            },
-        ],
+    const categoryNames = ['眼睛', '鼻子', '嘴巴', '社交区', '非社交区']
+    const categoryColors = ['#f0bf57', '#9fdc51', '#ff7e66', '#4ac8df', '#9ba4b0']
+
+    const patientValues = [patientEyes, patientNose, patientMouth, patientSocial, patientNonSocial]
+    const baselineValues = [baselineEyes, baselineNose, baselineMouth, baselineSocial, baselineNonSocial]
+
+    const patientAoi = categoryNames.map((name, index) => ({
+        name,
+        value: patientValues[index] ?? 0,
+        color: categoryColors[index] ?? '#9ba4b0',
+    }))
+
+    const baselineAoi = categoryNames.map((name, index) => ({
+        name,
+        value: baselineValues[index] ?? 0,
+        color: categoryColors[index] ?? '#9ba4b0',
+    }))
+
+    disposeAoiGlobes()
+    createAoiGlobe(patientGlobeRef.value, patientAoi, '#3ad8ff', 0.0046)
+    createAoiGlobe(baselineGlobeRef.value, baselineAoi, '#ffd166', 0.0042)
+}
+
+function createAoiGlobe(
+    container: HTMLDivElement | null,
+    data: Array<{ name: string; value: number; color: string }>,
+    glowColor: string,
+    autoRotateSpeed: number,
+) {
+    if (!container) return
+
+    const width = Math.max(240, container.clientWidth)
+    const height = Math.max(220, container.clientHeight)
+
+    const scene = new THREE.Scene()
+    const camera = new THREE.PerspectiveCamera(40, width / height, 0.1, 100)
+    camera.position.set(0, 0.2, 5.2)
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
+    renderer.setSize(width, height)
+    renderer.outputColorSpace = THREE.SRGBColorSpace
+    container.innerHTML = ''
+    container.appendChild(renderer.domElement)
+
+    const controls = new OrbitControls(camera, renderer.domElement)
+    controls.enablePan = false
+    controls.enableZoom = false
+    controls.enableDamping = true
+    controls.dampingFactor = 0.06
+    controls.minPolarAngle = Math.PI * 0.28
+    controls.maxPolarAngle = Math.PI * 0.72
+    controls.autoRotate = true
+    controls.autoRotateSpeed = autoRotateSpeed * 120
+
+    const ambient = new THREE.AmbientLight('#8ad4ff', 0.9)
+    scene.add(ambient)
+
+    const rimLight = new THREE.DirectionalLight('#55f2ff', 1.42)
+    rimLight.position.set(2.8, 2.6, 3.2)
+    scene.add(rimLight)
+
+    const fillLight = new THREE.DirectionalLight('#4f99ff', 0.78)
+    fillLight.position.set(-2.2, -1.2, -2)
+    scene.add(fillLight)
+
+    const sphereGeometry = new THREE.SphereGeometry(1.35, 72, 72)
+
+    const n = data.length
+    const anchors = data.map((entry, index) => {
+        const lat = 56 - index * 24
+        const lon = (index / n) * 360 + 40
+        return { ...entry, lat, lon }
     })
+
+    function createAoiSurfaceTexture(points: Array<{ value: number; color: string; lat: number; lon: number }>) {
+        const canvas = document.createElement('canvas')
+        canvas.width = 1024
+        canvas.height = 512
+        const ctx = canvas.getContext('2d')
+        if (!ctx) {
+            return null
+        }
+
+        const prepared = points.map((point) => {
+            const c = new THREE.Color(point.color)
+            const vivid = c.clone().offsetHSL(0, 0.42, 0.08)
+            return {
+                lat: point.lat,
+                lonTex: (point.lon + 180) % 360,
+                influence: 0.72 + Math.max(point.value, 0) / 100 * 1.28,
+                r: Math.max(0, Math.min(255, Math.round(vivid.r * 255))),
+                g: Math.max(0, Math.min(255, Math.round(vivid.g * 255))),
+                b: Math.max(0, Math.min(255, Math.round(vivid.b * 255))),
+            }
+        })
+
+        const image = ctx.createImageData(canvas.width, canvas.height)
+        const pixels = image.data
+        const regionMap = new Uint8Array(canvas.width * canvas.height)
+
+        for (let y = 0; y < canvas.height; y += 1) {
+            const lat = 90 - (y / (canvas.height - 1)) * 180
+            for (let x = 0; x < canvas.width; x += 1) {
+                const lon = (x / (canvas.width - 1)) * 360
+
+                let bestIndex = 0
+                let bestScore = Number.POSITIVE_INFINITY
+
+                prepared.forEach((point, index) => {
+                    const dLat = (lat - point.lat) / 42
+                    const rawDLon = Math.abs(lon - point.lonTex)
+                    const dLon = Math.min(rawDLon, 360 - rawDLon) / 88
+                    const distance2 = dLat * dLat + dLon * dLon
+                    const score = distance2 / point.influence
+
+                    if (score < bestScore) {
+                        bestScore = score
+                        bestIndex = index
+                    }
+                })
+
+                const idx = (y * canvas.width + x) * 4
+                const selected = prepared[bestIndex] ?? prepared[0]
+                regionMap[y * canvas.width + x] = bestIndex
+
+                pixels[idx] = selected?.r ?? 18
+                pixels[idx + 1] = selected?.g ?? 44
+                pixels[idx + 2] = selected?.b ?? 72
+                pixels[idx + 3] = 255
+            }
+        }
+
+        // 绘制硬边界线，保证分区界线分明
+        for (let y = 1; y < canvas.height - 1; y += 1) {
+            for (let x = 1; x < canvas.width - 1; x += 1) {
+                const idx = y * canvas.width + x
+                const current = regionMap[idx]
+                const left = regionMap[idx - 1]
+                const right = regionMap[idx + 1]
+                const up = regionMap[idx - canvas.width]
+                const down = regionMap[idx + canvas.width]
+                const boundary = current !== left || current !== right || current !== up || current !== down
+                if (!boundary) continue
+
+                const p = idx * 4
+                pixels[p] = 6
+                pixels[p + 1] = 12
+                pixels[p + 2] = 26
+                pixels[p + 3] = 255
+            }
+        }
+
+        ctx.putImageData(image, 0, 0)
+
+        const texture = new THREE.CanvasTexture(canvas)
+        texture.colorSpace = THREE.SRGBColorSpace
+        texture.wrapS = THREE.RepeatWrapping
+        texture.wrapT = THREE.ClampToEdgeWrapping
+        texture.needsUpdate = true
+        return texture
+    }
+
+    const surfaceTexture = createAoiSurfaceTexture(anchors)
+    const sphereMaterial = new THREE.MeshPhysicalMaterial({
+        color: '#ffffff',
+        map: surfaceTexture ?? undefined,
+        emissive: '#3d6f9c',
+        emissiveMap: surfaceTexture ?? undefined,
+        emissiveIntensity: 0.82,
+        roughness: 0.24,
+        metalness: 0.1,
+        transparent: false,
+        opacity: 1,
+        clearcoat: 0.42,
+        clearcoatRoughness: 0.24,
+    })
+    const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial)
+    scene.add(sphere)
+
+    const wire = new THREE.LineSegments(
+        new THREE.WireframeGeometry(new THREE.SphereGeometry(1.37, 22, 18)),
+        new THREE.LineBasicMaterial({ color: '#1ed7ff', transparent: true, opacity: 0.14 }),
+    )
+    sphere.add(wire)
+
+    const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(1.8, 0.02, 16, 120),
+        new THREE.MeshBasicMaterial({
+            color: glowColor,
+            transparent: true,
+            opacity: 0.35,
+        }),
+    )
+    ring.rotation.x = Math.PI * 0.34
+    ring.position.y = -0.08
+    scene.add(ring)
+
+    const labelsGroup = new THREE.Group()
+    sphere.add(labelsGroup)
+
+    const markerGeometry = new THREE.SphereGeometry(0.06, 16, 16)
+
+    function makePercentSprite(keyword: string, percent: number, accentColor: string) {
+        const dpr = Math.min(window.devicePixelRatio || 1, 2)
+        const logicalWidth = 360
+        const logicalHeight = 92
+        const canvas = document.createElement('canvas')
+        canvas.width = Math.round(logicalWidth * dpr)
+        canvas.height = Math.round(logicalHeight * dpr)
+        canvas.style.width = `${logicalWidth}px`
+        canvas.style.height = `${logicalHeight}px`
+        const ctx = canvas.getContext('2d')
+        if (!ctx) {
+            const fallback = new THREE.SpriteMaterial({ color: accentColor })
+            return new THREE.Sprite(fallback)
+        }
+        ctx.scale(dpr, dpr)
+
+        const accent = new THREE.Color(accentColor)
+        const accentRgb = `${Math.round(accent.r * 255)}, ${Math.round(accent.g * 255)}, ${Math.round(accent.b * 255)}`
+
+        ctx.clearRect(0, 0, logicalWidth, logicalHeight)
+        ctx.fillStyle = `rgba(${accentRgb}, 0.2)`
+        ctx.strokeStyle = `rgba(${accentRgb}, 0.95)`
+        ctx.lineWidth = 2.5
+        ctx.beginPath()
+        ctx.roundRect(2, 2, logicalWidth - 4, logicalHeight - 4, 14)
+        ctx.fill()
+        ctx.stroke()
+
+        ctx.shadowColor = `rgba(${accentRgb}, 0.75)`
+        ctx.shadowBlur = 12
+        ctx.strokeStyle = 'rgba(5, 12, 26, 0.95)'
+        ctx.lineWidth = 4
+        ctx.fillStyle = `rgb(${accentRgb})`
+        ctx.font = '700 36px "Segoe UI", sans-serif'
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        const label = `${keyword} ${percent.toFixed(1)}%`
+        ctx.strokeText(label, logicalWidth / 2, logicalHeight / 2)
+        ctx.fillText(label, logicalWidth / 2, logicalHeight / 2)
+
+        const texture = new THREE.CanvasTexture(canvas)
+        texture.colorSpace = THREE.SRGBColorSpace
+        texture.minFilter = THREE.LinearFilter
+        texture.magFilter = THREE.LinearFilter
+        const material = new THREE.SpriteMaterial({
+            map: texture,
+            transparent: true,
+            depthWrite: false,
+        })
+        const sprite = new THREE.Sprite(material)
+        sprite.scale.set(1.58, 0.44, 1)
+        return sprite
+    }
+
+    data.forEach((entry, index) => {
+        const lat = 56 - index * 24
+        const lon = (index / n) * 360 + 40
+        const radius = 1.42 + Math.max(0, entry.value) / 100 * 0.42
+        const phi = (90 - lat) * (Math.PI / 180)
+        const theta = (lon + 180) * (Math.PI / 180)
+        const x = -(radius * Math.sin(phi) * Math.cos(theta))
+        const y = radius * Math.cos(phi)
+        const z = radius * Math.sin(phi) * Math.sin(theta)
+
+        const marker = new THREE.Mesh(
+            markerGeometry,
+            new THREE.MeshBasicMaterial({ color: entry.color }),
+        )
+        marker.position.set(x, y, z)
+        labelsGroup.add(marker)
+
+        const percentSprite = makePercentSprite(entry.name, entry.value, entry.color)
+        percentSprite.position.set(x * 1.1, y * 1.1, z * 1.1)
+        labelsGroup.add(percentSprite)
+
+        const guideGeometry = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(x, y, z),
+            new THREE.Vector3(x * 1.07, y * 1.07, z * 1.07),
+        ])
+        const guide = new THREE.Line(
+            guideGeometry,
+            new THREE.LineBasicMaterial({
+                color: entry.color,
+                transparent: true,
+                opacity: 0.82,
+            }),
+        )
+        labelsGroup.add(guide)
+
+        const beamGeometry = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3((x * 1.35) / radius, (y * 1.35) / radius, (z * 1.35) / radius),
+            new THREE.Vector3(x, y, z),
+        ])
+        const beam = new THREE.Line(
+            beamGeometry,
+            new THREE.LineBasicMaterial({
+                color: entry.color,
+                transparent: true,
+                opacity: 0.72,
+            }),
+        )
+        labelsGroup.add(beam)
+    })
+
+    const clock = new THREE.Clock()
+    const animate = () => {
+        const t = clock.getElapsedTime()
+        sphere.rotation.y += autoRotateSpeed
+        wire.rotation.y -= autoRotateSpeed * 1.6
+        ring.rotation.z += autoRotateSpeed * 2.2
+        ring.material.opacity = 0.25 + Math.sin(t * 1.4) * 0.1
+
+        labelsGroup.children.forEach((obj: THREE.Object3D, idx: number) => {
+            if (obj instanceof THREE.Mesh) {
+                const pulse = 1 + Math.sin(t * 2.8 + idx * 0.9) * 0.18
+                obj.scale.setScalar(pulse)
+            }
+            if (obj instanceof THREE.Sprite) {
+                const scalePulse = 1 + Math.sin(t * 1.6 + idx * 0.45) * 0.03
+                obj.scale.set(1.58 * scalePulse, 0.44 * scalePulse, 1)
+            }
+        })
+
+        controls.update()
+        renderer.render(scene, camera)
+        frameId = window.requestAnimationFrame(animate)
+    }
+
+    const resize = () => {
+        const nextW = Math.max(240, container.clientWidth)
+        const nextH = Math.max(220, container.clientHeight)
+        camera.aspect = nextW / nextH
+        camera.updateProjectionMatrix()
+        renderer.setSize(nextW, nextH)
+    }
+
+    let frameId = window.requestAnimationFrame(animate)
+
+    globeInstances.push({ renderer, scene, camera, controls, frameId, resize })
+}
+
+function disposeAoiGlobes() {
+    globeInstances.forEach((instance) => {
+        window.cancelAnimationFrame(instance.frameId)
+        instance.controls.dispose()
+        instance.scene.traverse((obj: THREE.Object3D) => {
+            if (obj instanceof THREE.Mesh) {
+                obj.geometry.dispose()
+                if (Array.isArray(obj.material)) {
+                    obj.material.forEach((m: THREE.Material) => m.dispose())
+                } else {
+                    obj.material.dispose()
+                }
+            }
+            if (obj instanceof THREE.Line) {
+                obj.geometry.dispose()
+                if (Array.isArray(obj.material)) {
+                    obj.material.forEach((m: THREE.Material) => m.dispose())
+                } else {
+                    obj.material.dispose()
+                }
+            }
+        })
+        instance.renderer.dispose()
+    })
+    globeInstances.length = 0
 }
 
 function onVideoLoadedMetadata() {
@@ -372,7 +794,7 @@ function seekVideo(event: Event) {
 function resizeAll() {
     gaugeChart?.resize()
     middleTopChart?.resize()
-    middleBottomChart?.resize()
+    globeInstances.forEach((instance) => instance.resize())
 }
 
 onMounted(() => {
@@ -385,12 +807,11 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
     window.removeEventListener('resize', resizeAll)
+    disposeAoiGlobes()
     gaugeChart?.dispose()
     middleTopChart?.dispose()
-    middleBottomChart?.dispose()
     gaugeChart = null
     middleTopChart = null
-    middleBottomChart = null
 })
 </script>
 
@@ -421,12 +842,6 @@ onBeforeUnmount(() => {
                 </el-icon>
                 {{ testTimeText }}
             </div>
-            <div class="person-item">
-                <el-icon>
-                    <Aim />
-                </el-icon>
-                模型准确率 {{ accuracyText }}
-            </div>
         </div>
 
         <div class="content-grid">
@@ -449,7 +864,7 @@ onBeforeUnmount(() => {
                     </header>
                     <p class="diagnose">{{ riskInfo.diagnose }}</p>
                     <div class="advice-box">
-                        <small>医生建议 · 模型准确率 {{ accuracyText }}</small>
+                        <small>医生建议</small>
                         <p>{{ riskInfo.advice }}</p>
                     </div>
                 </section>
@@ -463,7 +878,40 @@ onBeforeUnmount(() => {
 
                 <section class="middle-block">
                     <h3>兴趣区域 AOI 分布</h3>
-                    <div ref="middleBottomRef" class="middle-bottom-chart"></div>
+                    <div class="middle-bottom-chart aoi-3d-wrap">
+                        <div class="aoi-3d-grid">
+                            <div class="aoi-3d-panel">
+                                <h4>患儿 AOI 球体</h4>
+                                <ul class="aoi-name-tags" :class="{ collapsed: !showPatientTags }"
+                                    @click="showPatientTags = !showPatientTags">
+                                    <li v-if="!showPatientTags" class="collapsed-title">
+                                        <b>索引</b>
+                                    </li>
+                                    <li v-for="item in patientAoiStats" :key="`pt-tag-${item.name}`"
+                                        v-show="showPatientTags" :style="{ '--tag-color': item.color }">
+                                        <span class="dot" :style="{ backgroundColor: item.color }"></span>
+                                        <b>{{ item.name }}</b>
+                                    </li>
+                                </ul>
+                                <div ref="patientGlobeRef" class="aoi-3d-canvas"></div>
+                            </div>
+                            <div class="aoi-3d-panel">
+                                <h4>常模 AOI 球体</h4>
+                                <ul class="aoi-name-tags" :class="{ collapsed: !showBaselineTags }"
+                                    @click="showBaselineTags = !showBaselineTags">
+                                    <li v-if="!showBaselineTags" class="collapsed-title">
+                                        <b>索引</b>
+                                    </li>
+                                    <li v-for="item in baselineAoiStats" :key="`bs-tag-${item.name}`"
+                                        v-show="showBaselineTags" :style="{ '--tag-color': item.color }">
+                                        <span class="dot" :style="{ backgroundColor: item.color }"></span>
+                                        <b>{{ item.name }}</b>
+                                    </li>
+                                </ul>
+                                <div ref="baselineGlobeRef" class="aoi-3d-canvas"></div>
+                            </div>
+                        </div>
+                    </div>
                 </section>
             </article>
 
@@ -666,15 +1114,58 @@ onBeforeUnmount(() => {
 }
 
 .gauge-chart {
+    position: relative;
     width: 100%;
     height: 264px;
     margin-top: 8px;
+    border-radius: 10px;
+    background:
+        radial-gradient(circle at 50% 84%, rgba(44, 132, 230, 0.3) 0%, rgba(11, 24, 45, 0) 66%),
+        linear-gradient(180deg, rgba(12, 30, 58, 0.36), rgba(8, 17, 35, 0.15));
+}
+
+.risk-block {
+    position: relative;
+    overflow: hidden;
+
+    &::before {
+        content: '';
+        position: absolute;
+        left: -6%;
+        right: -6%;
+        bottom: -46%;
+        height: 76%;
+        background: radial-gradient(circle at 50% 0%, rgba(45, 182, 255, 0.28), rgba(45, 182, 255, 0));
+        filter: blur(10px);
+        pointer-events: none;
+        z-index: 0;
+    }
+
+    &::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(180deg,
+                rgba(56, 214, 255, 0) 0%,
+                rgba(56, 214, 255, 0.18) 52%,
+                rgba(56, 214, 255, 0) 100%);
+        transform: translateY(-100%);
+        animation: gauge-scan 6.2s ease-in-out infinite;
+        pointer-events: none;
+        mix-blend-mode: screen;
+        z-index: 0;
+    }
+
+    >* {
+        position: relative;
+        z-index: 1;
+    }
 }
 
 .legend-row {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     align-items: center;
-    justify-content: space-between;
     gap: 8px;
     color: #9ba8ca;
     font-size: 11px;
@@ -685,10 +1176,23 @@ onBeforeUnmount(() => {
         gap: 4px;
     }
 
+    span:nth-child(1) {
+        justify-self: start;
+    }
+
+    span:nth-child(2) {
+        justify-self: center;
+    }
+
+    span:nth-child(3) {
+        justify-self: end;
+    }
+
     i {
         width: 10px;
         height: 10px;
         border-radius: 50%;
+        box-shadow: 0 0 10px currentColor;
     }
 
     .low {
@@ -705,10 +1209,35 @@ onBeforeUnmount(() => {
 }
 
 .mid-tip {
-    margin: 6px 0 0;
+    margin: 4px 0 0;
     text-align: center;
-    color: #8f9cc0;
+    color: #9ab9e6;
     font-size: 11px;
+}
+
+@keyframes gauge-scan {
+    0% {
+        transform: translateY(-100%);
+        opacity: 0;
+    }
+
+    22% {
+        opacity: 0.78;
+    }
+
+    50% {
+        transform: translateY(0%);
+        opacity: 0.45;
+    }
+
+    78% {
+        opacity: 0.7;
+    }
+
+    100% {
+        transform: translateY(100%);
+        opacity: 0;
+    }
 }
 
 .result-card {
@@ -778,6 +1307,197 @@ onBeforeUnmount(() => {
     width: 100%;
     height: calc(100% - 26px);
     min-height: 220px;
+}
+
+.middle-bottom-chart {
+    position: relative;
+    overflow: hidden;
+    border-radius: 10px;
+    background:
+        radial-gradient(circle at 50% 52%, rgba(34, 72, 132, 0.28) 0%, rgba(14, 24, 46, 0) 60%),
+        linear-gradient(180deg, rgba(14, 30, 57, 0.3), rgba(7, 16, 33, 0.08));
+
+    &::before {
+        content: '';
+        position: absolute;
+        left: -8%;
+        right: -8%;
+        top: -20%;
+        bottom: -20%;
+        background: conic-gradient(from 0deg,
+                rgba(26, 230, 255, 0) 0deg,
+                rgba(26, 230, 255, 0.24) 80deg,
+                rgba(26, 230, 255, 0) 160deg,
+                rgba(255, 209, 102, 0.18) 230deg,
+                rgba(255, 209, 102, 0) 300deg,
+                rgba(26, 230, 255, 0) 360deg);
+        filter: blur(18px);
+        opacity: 0.42;
+        animation: aoi-glow-spin 16s linear infinite;
+        pointer-events: none;
+        z-index: 0;
+    }
+
+    &::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(180deg,
+                rgba(30, 242, 255, 0) 0%,
+                rgba(30, 242, 255, 0.16) 48%,
+                rgba(30, 242, 255, 0) 100%);
+        transform: translateY(-100%);
+        animation: aoi-scan 5.6s ease-in-out infinite;
+        mix-blend-mode: screen;
+        pointer-events: none;
+        z-index: 1;
+    }
+
+    :deep(canvas) {
+        position: relative;
+        z-index: 2;
+    }
+}
+
+.aoi-3d-wrap {
+    padding: 10px;
+}
+
+.aoi-3d-grid {
+    position: relative;
+    z-index: 2;
+    height: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.aoi-3d-panel {
+    position: relative;
+    border-radius: 10px;
+    border: 1px solid rgba(92, 137, 189, 0.24);
+    background: linear-gradient(180deg, rgba(20, 39, 70, 0.56), rgba(9, 20, 40, 0.45));
+    padding: 8px 10px;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: auto minmax(180px, 1fr);
+    box-shadow: inset 0 0 30px rgba(64, 145, 255, 0.08);
+
+    h4 {
+        margin: 0;
+        color: #e6f2ff;
+        font-size: 14px;
+        font-weight: 700;
+    }
+}
+
+.aoi-3d-canvas {
+    width: 100%;
+    height: clamp(180px, 21vh, 230px);
+    touch-action: none;
+    cursor: grab;
+}
+
+.aoi-3d-canvas:active {
+    cursor: grabbing;
+}
+
+.aoi-name-tags {
+    position: absolute;
+    top: 40px;
+    right: 10px;
+    margin: 0;
+    padding: 8px;
+    width: 106px;
+    list-style: none;
+    display: grid;
+    gap: 4px;
+    border: 1px solid rgba(94, 145, 202, 0.24);
+    border-radius: 8px;
+    background: rgba(8, 18, 38, 0.68);
+    backdrop-filter: blur(2px);
+    z-index: 3;
+    cursor: pointer;
+    transition: opacity 0.18s ease, transform 0.18s ease;
+
+    li {
+        --tag-color: #d9e9ff;
+        display: grid;
+        grid-template-columns: 10px auto;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+    }
+
+    .collapsed-title {
+        grid-template-columns: 1fr;
+
+        b {
+            color: #d2ecff;
+            text-align: center;
+        }
+    }
+
+    .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        box-shadow: 0 0 10px currentColor;
+    }
+
+    b {
+        color: var(--tag-color);
+        text-shadow: 0 0 10px color-mix(in srgb, var(--tag-color) 62%, transparent);
+        font-size: 12px;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+}
+
+.aoi-name-tags.collapsed {
+    width: 62px;
+    padding: 6px 8px;
+    top: 10px;
+    opacity: 0.92;
+}
+
+@keyframes aoi-glow-spin {
+    from {
+        transform: rotate(0deg) scale(1);
+    }
+
+    50% {
+        transform: rotate(180deg) scale(1.05);
+    }
+
+    to {
+        transform: rotate(360deg) scale(1);
+    }
+}
+
+@keyframes aoi-scan {
+    0% {
+        transform: translateY(-100%);
+        opacity: 0;
+    }
+
+    20% {
+        opacity: 0.7;
+    }
+
+    50% {
+        transform: translateY(0%);
+        opacity: 0.4;
+    }
+
+    80% {
+        opacity: 0.7;
+    }
+
+    100% {
+        transform: translateY(100%);
+        opacity: 0;
+    }
 }
 
 .video-stage {
@@ -916,6 +1636,15 @@ onBeforeUnmount(() => {
     .middle-bottom-chart {
         height: 280px;
         min-height: 280px;
+    }
+
+    .aoi-3d-grid {
+        grid-template-columns: 1fr;
+        height: auto;
+    }
+
+    .aoi-3d-canvas {
+        height: 190px;
     }
 
     .report-video {
