@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ElMessage } from 'element-plus'
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { FullScreen, Loading, ScaleToOriginal, VideoPlay } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { getChildList } from '../../api/child'
 import { analyzeChildData, getRecordHistory } from '../../api/record'
 import type { ChildInfo, EyeScreenResultVO, ScreenRecordVO } from '../../types/domain'
+import { useUiStore } from '../../stores/ui'
 
 const ANALYSIS_REPORT_RESULT_KEY = 'analysis_report_result_payload'
 const FIXED_DATASET_FILE_NAME = 'participant102011_fixation_data.xlsx'
@@ -89,6 +90,7 @@ const detectProgress = computed(() => {
 const screenToggleIcon = computed(() => (isExpandedMode.value ? ScaleToOriginal : FullScreen))
 
 const router = useRouter()
+const uiStore = useUiStore()
 
 function mapRiskLevel(level: string): RiskLevel {
     const upper = String(level || '').toUpperCase()
@@ -300,7 +302,17 @@ async function onVideoEnded() {
 
 function toggleScreenMode() {
     isExpandedMode.value = !isExpandedMode.value
+    if (isExpandedMode.value) {
+        uiStore.enterDetectFullscreen()
+    } else {
+        uiStore.exitDetectFullscreen()
+    }
 }
+
+// 组件销毁时确保退出全屏状态
+onBeforeUnmount(() => {
+    uiStore.exitDetectFullscreen()
+})
 
 async function startVideoPlayback() {
     if (!videoRef.value) {
@@ -380,6 +392,7 @@ async function goAnalysisReport() {
     analyzingChildId.value = selectedChildId.value
     hasStartedVideo.value = true
     isExpandedMode.value = true
+    uiStore.enterDetectFullscreen()
 
     try {
         // Wait for v-if video node mount before accessing videoRef.
@@ -396,7 +409,7 @@ async function goAnalysisReport() {
 </script>
 
 <template>
-    <section class="detect-page">
+    <section class="detect-page" :class="{ 'fullscreen-detect': isExpandedMode }">
         <div class="detect-grid" :class="{ expanded: isExpandedMode }">
             <aside v-show="!isExpandedMode" class="left-panel">
                 <h3>患儿信息</h3>
@@ -493,6 +506,15 @@ async function goAnalysisReport() {
     overflow: hidden;
 }
 
+.fullscreen-detect {
+    flex: 1;
+    height: 0;
+    min-height: 0;
+    margin-top: 0;
+    align-items: center;
+    justify-content: center;
+}
+
 .detect-grid {
     display: grid;
     grid-template-columns: 408px minmax(0, 1fr);
@@ -505,19 +527,24 @@ async function goAnalysisReport() {
     &.expanded {
         grid-template-columns: minmax(0, 1fr);
         gap: 0;
+        align-items: center;
+        justify-content: center;
 
         .center-panel {
-            padding-bottom: 10px;
+            padding-bottom: 0;
         }
 
         .viewer-box {
-            flex: 1;
-            height: 100%;
+            flex: unset;
+            height: auto;
             min-height: 0;
+            aspect-ratio: 16 / 9;
+            width: 100%;
+            max-height: calc(100vh - 64px);
         }
 
         .detect-video {
-            object-fit: cover;
+            object-fit: contain;
         }
     }
 }
@@ -758,6 +785,11 @@ async function goAnalysisReport() {
     height: 100%;
     display: flex;
     flex-direction: column;
+    justify-content: center;
+
+    .detect-grid:not(.expanded) & {
+        justify-content: flex-start;
+    }
 
     .detect-meta {
         display: flex;

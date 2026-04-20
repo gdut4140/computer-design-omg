@@ -7,8 +7,10 @@ import StartDetect from '../components/modules/StartDetect.vue'
 import AnalysisReport from '../components/modules/AnalysisReport.vue'
 import HistoryReport from '../components/modules/HistoryReport.vue'
 import ProfileCenter from '../components/modules/ProfileCenter.vue'
+import { useUiStore } from '../stores/ui'
 
 const route = useRoute()
+const uiStore = useUiStore()
 
 const modules = {
   'patient-info': InfoComplete,
@@ -25,28 +27,34 @@ const currentModule = computed(() => {
 </script>
 
 <template>
-  <section class="space-screen module-screen">
+  <section class="space-screen module-screen" :class="{ 'detect-fullscreen': uiStore.detectFullscreen }">
     <div class="stars-layer"></div>
-    <aside class="gear-rail gear-rail-left" aria-hidden="true">
-      <div class="rail-core"></div>
-      <div class="gear gear-xl spin-cw"></div>
-      <div class="gear gear-md spin-ccw"></div>
-      <div class="gear gear-sm spin-cw"></div>
-      <div class="joint joint-a"></div>
-      <div class="joint joint-b"></div>
-    </aside>
+    <transition name="gear-fade">
+      <aside v-show="!uiStore.detectFullscreen" class="gear-rail gear-rail-left" aria-hidden="true">
+        <div class="rail-core"></div>
+        <div class="gear gear-xl spin-cw"></div>
+        <div class="gear gear-md spin-ccw"></div>
+        <div class="gear gear-sm spin-cw"></div>
+        <div class="joint joint-a"></div>
+        <div class="joint joint-b"></div>
+      </aside>
+    </transition>
 
-    <aside class="gear-rail gear-rail-right" aria-hidden="true">
-      <div class="rail-core"></div>
-      <div class="gear gear-lg spin-ccw"></div>
-      <div class="gear gear-md spin-cw"></div>
-      <div class="gear gear-sm spin-ccw"></div>
-      <div class="joint joint-a"></div>
-      <div class="joint joint-b"></div>
-    </aside>
+    <transition name="gear-fade">
+      <aside v-show="!uiStore.detectFullscreen" class="gear-rail gear-rail-right" aria-hidden="true">
+        <div class="rail-core"></div>
+        <div class="gear gear-lg spin-ccw"></div>
+        <div class="gear gear-md spin-cw"></div>
+        <div class="gear gear-sm spin-ccw"></div>
+        <div class="joint joint-a"></div>
+        <div class="joint joint-b"></div>
+      </aside>
+    </transition>
 
-    <div class="module-container">
-      <Header />
+    <div class="module-container" :class="{ fullscreen: uiStore.detectFullscreen }">
+      <transition name="header-fade">
+        <Header v-show="!uiStore.detectFullscreen" />
+      </transition>
       <component :is="currentModule" />
     </div>
   </section>
@@ -196,6 +204,42 @@ const currentModule = computed(() => {
   width: 100%;
   margin: 0;
   padding-top: 84px;
+  transition: padding-top 0.35s ease;
+
+  &.fullscreen {
+    padding-top: 0;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+}
+
+.module-screen.detect-fullscreen {
+  padding: 0;
+}
+
+/* 齿轮淡出动画 */
+.gear-fade-enter-active,
+.gear-fade-leave-active {
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.gear-fade-enter-from,
+.gear-fade-leave-to {
+  opacity: 0;
+  transform: scaleY(0.92);
+}
+
+/* 顶栏淡出动画 */
+.header-fade-enter-active,
+.header-fade-leave-active {
+  transition: opacity 0.3s ease, transform 0.25s ease;
+}
+
+.header-fade-enter-from,
+.header-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-12px);
 }
 
 @keyframes spinClockwise {
