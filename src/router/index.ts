@@ -3,7 +3,7 @@ import EntryView from '../views/EntryView.vue'
 import LoginView from '../views/LoginView.vue'
 import LayoutView from '../views/layout.vue'
 
-const TOKEN_KEY = 'stareye_token'
+const TOKEN_KEY = import.meta.env.VITE_TOKEN_KEY || 'stareye_token'
 const PUBLIC_PATHS = new Set(['/entry', '/login'])
 
 const router = createRouter({

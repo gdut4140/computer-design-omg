@@ -2,7 +2,8 @@ import axios from 'axios'
 import http from '../http'
 import type { ApiResult, LoginDTO, LoginVO, RegisterDTO } from '../types/auth'
 
-const TOKEN_KEY = 'stareye_token'
+const TOKEN_KEY = import.meta.env.VITE_TOKEN_KEY || 'stareye_token'
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
 
 export function login(payload: LoginDTO) {
     return http.post<ApiResult<LoginVO>>('/user/login', payload).then((res) => res.data.data)
@@ -27,7 +28,7 @@ export function logout() {
 
             const pureToken = token.replace(/^Bearer\s+/i, '')
             const retry = await axios.post<ApiResult<null>>(
-                '/api/user/logout',
+                `${API_BASE_URL}/user/logout`,
                 {},
                 {
                     headers: {

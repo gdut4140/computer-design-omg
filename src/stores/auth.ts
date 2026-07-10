@@ -3,8 +3,8 @@ import { defineStore } from 'pinia'
 import { login as loginApi, logout as logoutApi, register as registerApi } from '../api/auth'
 import type { AppRole, LoginVO } from '../types/auth'
 
-const TOKEN_KEY = 'stareye_token'
-const USER_KEY = 'stareye_user'
+const TOKEN_KEY = import.meta.env.VITE_TOKEN_KEY || 'stareye_token'
+const USER_KEY = import.meta.env.VITE_USER_KEY || 'stareye_user'
 
 function getInitialUser(): LoginVO | null {
     const raw = localStorage.getItem(USER_KEY)

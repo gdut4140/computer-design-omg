@@ -1,14 +1,15 @@
 import axios from 'axios'
 import type { ApiResult } from './types/auth'
 
-const TOKEN_KEY = 'stareye_token'
+const TOKEN_KEY = import.meta.env.VITE_TOKEN_KEY || 'stareye_token'
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
 
 function isBusinessSuccess(code: unknown) {
     return code === 0 || code === 200 || code === '0' || code === '200'
 }
 
 const http = axios.create({
-    baseURL: '/api',
+    baseURL: API_BASE_URL,
     timeout: 15000,
 })
 
